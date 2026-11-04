@@ -1,0 +1,546 @@
+
+# ============================================================
+# CLASSNOTE
+# Calculadora matematica creada por Angel
+# Python 3 + Streamlit
+# Procedimientos matematicos paso a paso
+# ============================================================
+
+import ast
+import math
+import operator
+import re
+import streamlit as st
+
+# ------------------------------------------------------------
+# CONFIGURACION
+# ------------------------------------------------------------
+
+st.set_page_config(
+    page_title="CLASSNOTE - Calculadora Matemática",
+    page_icon="🧮",
+    layout="centered"
+)
+
+AZUL = "#087BFF"
+AZUL_OSCURO = "#06152E"
+AMARILLO = "#FFD928"
+BLANCO = "#FFFFFF"
+GRIS = "#AFC7E8"
+
+# ------------------------------------------------------------
+# DISEÑO
+# ------------------------------------------------------------
+
+st.markdown("""
+<style>
+.stApp {
+    background-color: #06152E;
+    color: white;
+}
+h1, h2, h3 {
+    color: #FFD928 !important;
+}
+p, label, span {
+    color: white;
+}
+.stTextInput input {
+    background-color: #05070B;
+    color: #FFD928;
+    border: 2px solid #087BFF;
+    border-radius: 10px;
+}
+.stButton button {
+    background-color: #FFD928;
+    color: #06152E;
+    border-radius: 10px;
+    font-weight: bold;
+    border: none;
+    width: 100%;
+}
+.stButton button:hover {
+    background-color: #087BFF;
+    color: white;
+}
+.resultado {
+    background-color: #05070B;
+    border: 2px solid #087BFF;
+    border-radius: 12px;
+    padding: 18px;
+    margin-top: 15px;
+}
+.paso {
+    background-color: #102747;
+    border-left: 4px solid #FFD928;
+    padding: 12px;
+    border-radius: 7px;
+    margin: 8px 0;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# FUNCIONES MATEMATICAS
+# ------------------------------------------------------------
+
+def promedio(*numeros):
+    if not numeros:
+        raise ValueError("Ingresa numeros para calcular el promedio.")
+    return sum(numeros) / len(numeros)
+
+
+def porcentaje(numero, tasa):
+    return numero * tasa / 100
+
+
+def raiz(numero):
+    if numero < 0:
+        raise ValueError("No existe una raiz real.")
+    return math.sqrt(numero)
+
+
+def raiz_n(numero, indice):
+    if indice == 0:
+        raise ValueError("El indice no puede ser cero.")
+
+    if numero < 0:
+        if indice % 2 == 0:
+            raise ValueError("No existe una raiz real par de un negativo.")
+        return -((-numero) ** (1 / indice))
+
+    return numero ** (1 / indice)
+
+
+def formato(numero):
+    if isinstance(numero, bool):
+        return "Verdadero" if numero else "Falso"
+
+    if isinstance(numero, int):
+        return str(numero)
+
+    if isinstance(numero, float):
+        if not math.isfinite(numero):
+            return str(numero)
+        if numero.is_integer():
+            return str(int(numero))
+        return f"{numero:.10g}"
+
+    return str(numero)
+
+
+FUNCIONES = {
+    "promedio": promedio,
+    "porcentaje": porcentaje,
+    "raiz": raiz,
+    "sqrt": raiz,
+    "raiz_n": raiz_n,
+    "abs": abs
+}
+
+OPERADORES = {
+    ast.Add: (operator.add, "+"),
+    ast.Sub: (operator.sub, "-"),
+    ast.Mult: (operator.mul, "×"),
+    ast.Div: (operator.truediv, "÷"),
+    ast.FloorDiv: (operator.floordiv, "//"),
+    ast.Mod: (operator.mod, "módulo"),
+    ast.Pow: (operator.pow, "^")
+}
+
+UNARIOS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg
+}
+
+# ------------------------------------------------------------
+# PREPARAR EXPRESION
+# ------------------------------------------------------------
+
+def preparar(texto):
+    texto = texto.strip()
+
+    if not texto:
+        raise ValueError("Escribe una operacion.")
+
+    texto = texto.replace("×", "*")
+    texto = texto.replace("÷", "/")
+    texto = texto.replace("−", "-")
+    texto = texto.replace("^", "**")
+    texto = texto.replace("√(", "raiz(")
+
+    # Porcentajes como 15%
+    texto = re.sub(
+        r"(?<![\w.)])(\d+(?:\.\d+)?)\s*%",
+        r"(\1/100)",
+        texto
+    )
+
+    # Multiplicacion implicita: 5(6), (2+3)(4)
+    texto = re.sub(r"(?<=[0-9.)])\s*(?=\()", "*", texto)
+    texto = re.sub(r"(?<=\))\s*(?=[0-9])", "*", texto)
+
+    # Multiplicacion antes de funciones
+    for nombre in FUNCIONES:
+        texto = re.sub(
+            r"(?<=[0-9.)])\s*(?=" + nombre + r"\s*\()",
+            "*",
+            texto
+        )
+
+    return texto
+
+# ------------------------------------------------------------
+# MOTOR MATEMATICO Y PROCEDIMIENTOS
+# ------------------------------------------------------------
+
+def evaluar(nodo, pasos):
+
+    if isinstance(nodo, ast.Expression):
+        return evaluar(nodo.body, pasos)
+
+    if isinstance(nodo, ast.Constant):
+        if type(nodo.value) in (int, float, bool):
+            return nodo.value
+        raise ValueError("Solo se admiten numeros.")
+
+    if isinstance(nodo, ast.Num):
+        return nodo.n
+
+    # Operaciones aritmeticas
+    if isinstance(nodo, ast.BinOp):
+
+        a = evaluar(nodo.left, pasos)
+        b = evaluar(nodo.right, pasos)
+
+        tipo = type(nodo.op)
+
+        if tipo not in OPERADORES:
+            raise ValueError("Operador no permitido.")
+
+        if tipo == ast.Pow and abs(b) > 1000:
+            raise ValueError("Exponente demasiado grande.")
+
+        funcion, simbolo = OPERADORES[tipo]
+
+        if tipo in (ast.Div, ast.FloorDiv, ast.Mod) and b == 0:
+            raise ZeroDivisionError("No se puede dividir entre cero.")
+
+        resultado = funcion(a, b)
+
+        if isinstance(resultado, complex):
+            raise ValueError("El resultado no es un numero real.")
+
+        if isinstance(resultado, float) and not math.isfinite(resultado):
+            raise ValueError("Resultado fuera de rango.")
+
+        pasos.append(
+            f"{formato(a)} {simbolo} {formato(b)} = {formato(resultado)}"
+        )
+
+        return resultado
+
+    # Numeros positivos y negativos
+    if isinstance(nodo, ast.UnaryOp):
+
+        valor = evaluar(nodo.operand, pasos)
+
+        if isinstance(nodo.op, ast.Not):
+            resultado = not bool(valor)
+            pasos.append(f"NOT {formato(valor)} = {formato(resultado)}")
+            return resultado
+
+        tipo = type(nodo.op)
+
+        if tipo not in UNARIOS:
+            raise ValueError("Operacion unaria no permitida.")
+
+        resultado = UNARIOS[tipo](valor)
+
+        if tipo == ast.USub:
+            pasos.append(f"-({formato(valor)}) = {formato(resultado)}")
+
+        return resultado
+
+    # Funciones matematicas
+    if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name):
+
+        nombre = nodo.func.id
+
+        if nombre not in FUNCIONES or nodo.keywords:
+            raise ValueError("Funcion no permitida.")
+
+        argumentos = [evaluar(x, pasos) for x in nodo.args]
+
+        resultado = FUNCIONES[nombre](*argumentos)
+
+        if isinstance(resultado, complex):
+            raise ValueError("Resultado no real.")
+
+        if isinstance(resultado, float) and not math.isfinite(resultado):
+            raise ValueError("Resultado fuera de rango.")
+
+        if nombre == "promedio":
+            pasos.append(
+                f"Promedio: ({' + '.join(map(formato, argumentos))}) "
+                f"/ {len(argumentos)} = {formato(resultado)}"
+            )
+
+        elif nombre == "porcentaje":
+            pasos.append(
+                f"Porcentaje: {formato(argumentos[0])} × "
+                f"{formato(argumentos[1])} / 100 = {formato(resultado)}"
+            )
+
+        elif nombre in ("raiz", "sqrt"):
+            pasos.append(
+                f"Raiz cuadrada de {formato(argumentos[0])} "
+                f"= {formato(resultado)}"
+            )
+
+        elif nombre == "raiz_n":
+            pasos.append(
+                f"Raiz de indice {formato(argumentos[1])} "
+                f"de {formato(argumentos[0])} = {formato(resultado)}"
+            )
+
+        elif nombre == "abs":
+            pasos.append(
+                f"Valor absoluto de {formato(argumentos[0])} "
+                f"= {formato(resultado)}"
+            )
+
+        return resultado
+
+    # Comparaciones
+    if isinstance(nodo, ast.Compare):
+
+        a = evaluar(nodo.left, pasos)
+
+        for op, comp in zip(nodo.ops, nodo.comparators):
+
+            b = evaluar(comp, pasos)
+
+            if isinstance(op, ast.Eq):
+                ok, simbolo = a == b, "=="
+            elif isinstance(op, ast.NotEq):
+                ok, simbolo = a != b, "!="
+            elif isinstance(op, ast.Lt):
+                ok, simbolo = a < b, "<"
+            elif isinstance(op, ast.LtE):
+                ok, simbolo = a <= b, "<="
+            elif isinstance(op, ast.Gt):
+                ok, simbolo = a > b, ">"
+            elif isinstance(op, ast.GtE):
+                ok, simbolo = a >= b, ">="
+            else:
+                raise ValueError("Comparacion no permitida.")
+
+            pasos.append(
+                f"{formato(a)} {simbolo} {formato(b)} = {formato(ok)}"
+            )
+
+            if not ok:
+                return False
+
+            a = b
+
+        return True
+
+    # Logica AND
+    if isinstance(nodo, ast.BoolOp) and isinstance(nodo.op, ast.And):
+
+        for elemento in nodo.values:
+            valor = evaluar(elemento, pasos)
+
+            if not valor:
+                pasos.append("AND = Falso")
+                return False
+
+        pasos.append("AND = Verdadero")
+        return True
+
+    # Logica OR
+    if isinstance(nodo, ast.BoolOp) and isinstance(nodo.op, ast.Or):
+
+        for elemento in nodo.values:
+            valor = evaluar(elemento, pasos)
+
+            if valor:
+                pasos.append("OR = Verdadero")
+                return True
+
+        pasos.append("OR = Falso")
+        return False
+
+    raise ValueError("Operacion no compatible.")
+
+# ------------------------------------------------------------
+# CALCULO COMPLETO
+# ------------------------------------------------------------
+
+def calcular(texto):
+
+    expresion = preparar(texto)
+
+    arbol = ast.parse(expresion, mode="eval")
+
+    pasos = []
+
+    resultado = evaluar(arbol, pasos)
+
+    return resultado, pasos
+
+# ------------------------------------------------------------
+# INTERFAZ PRINCIPAL
+# ------------------------------------------------------------
+
+st.markdown(
+    f"""
+    <h1 style='text-align:center; color:{AMARILLO};'>
+        🧮 CLASSNOTE
+    </h1>
+    <h4 style='text-align:center; color:{BLANCO};'>
+        Calculadora matemática paso a paso
+    </h4>
+    <p style='text-align:center; color:{GRIS};'>
+        Aprende, calcula y comprende cada procedimiento.
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
+st.divider()
+
+st.subheader("✏️ Escribe tu operación")
+
+ejemplos = [
+    "Selecciona un ejemplo",
+    "8 + 5 × 3",
+    "(8)(8^2) / 6",
+    "raiz(81)",
+    "raiz_n(27,3)",
+    "promedio(4,6,8)",
+    "porcentaje(200,15)",
+    "abs(-25)",
+    "5 > 3",
+    "5 > 3 and 8 > 4"
+]
+
+ejemplo = st.selectbox("Ejemplos matemáticos", ejemplos)
+
+if ejemplo != "Selecciona un ejemplo":
+    st.session_state["operacion"] = ejemplo
+
+if "operacion" not in st.session_state:
+    st.session_state["operacion"] = ""
+
+operacion = st.text_input(
+    "Operación matemática",
+    key="operacion",
+    placeholder="Ejemplo: (8)(8^2) / 6"
+)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    calcular_boton = st.button("🟡 CALCULAR", use_container_width=True)
+
+with col2:
+    limpiar_boton = st.button("🗑️ LIMPIAR", use_container_width=True)
+
+if limpiar_boton:
+    st.session_state["operacion"] = ""
+    st.rerun()
+
+# ------------------------------------------------------------
+# RESULTADOS
+# ------------------------------------------------------------
+
+if calcular_boton:
+
+    try:
+
+        resultado, pasos = calcular(operacion)
+
+        st.markdown(
+            f"""
+            <div class="resultado">
+                <h3>RESULTADO FINAL</h3>
+                <h1 style="color:#FFD928;">{formato(resultado)}</h1>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.divider()
+
+        st.subheader("📚 Procedimiento matemático")
+
+        st.write("**Operación original:**")
+        st.code(operacion)
+
+        if pasos:
+
+            for i, paso in enumerate(pasos, start=1):
+
+                st.markdown(
+                    f"""
+                    <div class="paso">
+                        <b>Paso {i}:</b><br>
+                        {paso}
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+
+        else:
+            st.info("La expresión no requiere operaciones intermedias.")
+
+        st.success(f"Resultado final: {formato(resultado)}")
+
+    except ZeroDivisionError:
+        st.error("Error: no se puede dividir entre cero.")
+
+    except (ValueError, SyntaxError, TypeError,
+            OverflowError, ArithmeticError) as error:
+        st.error(f"Error matemático: {error}")
+
+    except Exception as error:
+        st.error(f"Error inesperado: {error}")
+
+# ------------------------------------------------------------
+# AYUDA
+# ------------------------------------------------------------
+
+st.divider()
+
+st.subheader("📖 ¿Cómo utilizar CLASSNOTE?")
+
+st.markdown("""
+| Función | Ejemplo |
+|---|---|
+| Suma | `8 + 5` |
+| Resta | `10 - 4` |
+| Multiplicación | `5 * 6` |
+| Multiplicación implícita | `5(6)` |
+| División | `20 / 4` |
+| Potenciación | `2^3` |
+| Raíz cuadrada | `raiz(81)` |
+| Raíz de cualquier índice | `raiz_n(27,3)` |
+| Porcentaje | `porcentaje(200,15)` |
+| Promedio | `promedio(4,6,8)` |
+| Valor absoluto | `abs(-10)` |
+| Comparación | `8 > 5` |
+| Lógica | `5 > 3 and 8 > 4` |
+""")
+
+st.markdown(
+    """
+    <p style="text-align:center; color:#AFC7E8;">
+        CLASSNOTE © 2026<br>
+        Creada por Angel | Python + Streamlit
+    </p>
+    """,
+    unsafe_allow_html=True
+)
+
