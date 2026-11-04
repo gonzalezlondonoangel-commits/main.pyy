@@ -1,0 +1,669 @@
+
+# ============================================================
+# CLASSNOTE
+# Calculadora matematica creada por Angel
+# Python 3 + Kivy
+# Incluye procedimientos matematicos paso a paso
+# ============================================================
+
+import ast
+import math
+import operator
+import re
+
+from kivy.app import App
+from kivy.core.window import Window
+from kivy.metrics import dp, sp
+from kivy.utils import get_color_from_hex
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.button import Button
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
+from kivy.uix.scrollview import ScrollView
+
+
+# ---------------- COLORES ----------------
+
+AZUL = "#087BFF"
+AZUL_OSCURO = "#06152E"
+AMARILLO = "#FFD928"
+ROJO = "#F2384B"
+NEGRO = "#05070B"
+BLANCO = "#FFFFFF"
+GRIS = "#AFC7E8"
+
+
+def color(c):
+    return get_color_from_hex(c)
+
+
+# ---------------- FUNCIONES MATEMATICAS ----------------
+
+def promedio(*numeros):
+    if not numeros:
+        raise ValueError("Ingresa numeros para calcular el promedio.")
+    return sum(numeros) / len(numeros)
+
+
+def porcentaje(numero, tasa):
+    return numero * tasa / 100
+
+
+def raiz(numero):
+    if numero < 0:
+        raise ValueError("No existe una raiz real de ese numero.")
+    return math.sqrt(numero)
+
+
+def raiz_n(numero, indice):
+    if indice == 0:
+        raise ValueError("El indice de una raiz no puede ser cero.")
+
+    if numero < 0:
+        if indice % 2 == 0:
+            raise ValueError("Raiz par de un numero negativo.")
+
+        return -((-numero) ** (1 / indice))
+
+    return numero ** (1 / indice)
+
+
+def formato(numero):
+    if isinstance(numero, bool):
+        return "Verdadero" if numero else "Falso"
+
+    if isinstance(numero, int):
+        return str(numero)
+
+    if isinstance(numero, float):
+        if not math.isfinite(numero):
+            return str(numero)
+        if numero.is_integer():
+            return str(int(numero))
+        return f"{numero:.10g}"
+
+    return str(numero)
+
+
+FUNCIONES = {
+    "promedio": promedio,
+    "porcentaje": porcentaje,
+    "raiz": raiz,
+    "sqrt": raiz,
+    "abs": abs,
+    "raiz_n": raiz_n,
+}
+
+OPERADORES = {
+    ast.Add: (operator.add, "+"),
+    ast.Sub: (operator.sub, "-"),
+    ast.Mult: (operator.mul, "×"),
+    ast.Div: (operator.truediv, "÷"),
+    ast.FloorDiv: (operator.floordiv, "//"),
+    ast.Mod: (operator.mod, "módulo"),
+    ast.Pow: (operator.pow, "^"),
+}
+
+UNARIOS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+
+# ---------------- PREPARAR EXPRESION ----------------
+
+def preparar(texto):
+    texto = texto.strip()
+
+    if not texto:
+        raise ValueError("Escribe una operacion.")
+
+    texto = texto.replace("×", "*").replace("÷", "/")
+    texto = texto.replace("−", "-").replace("^", "**")
+    texto = texto.replace("√(", "raiz(")
+
+    # Porcentaje: 15% se convierte en 15/100.
+    texto = re.sub(
+        r"(?<![\w.)])(\d+(?:\.\d+)?)\s*%",
+        r"(\1/100)",
+        texto
+    )
+
+    # Multiplicacion implicita: 5(7), (2+3)(4).
+    texto = re.sub(r"(?<=[0-9.)])\s*(?=\()", "*", texto)
+    texto = re.sub(r"(?<=\))\s*(?=[0-9])", "*", texto)
+
+    # 2raiz(9) se interpreta como 2*raiz(9).
+    for nombre in FUNCIONES:
+        texto = re.sub(
+            r"(?<=[0-9.)])\s*(?=" + nombre + r"\s*\()",
+            "*",
+            texto
+        )
+
+    # 2x se interpreta como multiplicacion solo para funciones
+    # conocidas. Las variables algebraicas no se admiten.
+
+    return texto
+
+
+# ---------------- MOTOR DE CALCULO Y PROCEDIMIENTOS ----------------
+
+def evaluar(nodo, pasos):
+    if isinstance(nodo, ast.Expression):
+        return evaluar(nodo.body, pasos)
+
+    if isinstance(nodo, ast.Constant):
+        if type(nodo.value) in (int, float, bool):
+            return nodo.value
+        raise ValueError("Solo se admiten numeros.")
+
+    if isinstance(nodo, ast.Num):
+        return nodo.n
+
+    # Operaciones: suma, resta, multiplicacion, division,
+    # modulo, potenciacion y division entera.
+    if isinstance(nodo, ast.BinOp):
+        a = evaluar(nodo.left, pasos)
+        b = evaluar(nodo.right, pasos)
+
+        tipo = type(nodo.op)
+
+        if tipo not in OPERADORES:
+            raise ValueError("Operador no permitido.")
+
+        if tipo == ast.Pow and abs(b) > 1000:
+            raise ValueError("Exponente demasiado grande.")
+
+        funcion, simbolo = OPERADORES[tipo]
+
+        if tipo in (ast.Div, ast.FloorDiv, ast.Mod) and b == 0:
+            raise ZeroDivisionError("No se puede dividir entre cero.")
+
+        resultado = funcion(a, b)
+
+        if isinstance(resultado, complex):
+            raise ValueError("El resultado no es un numero real.")
+
+        if isinstance(resultado, float) and not math.isfinite(resultado):
+            raise ValueError("Resultado fuera de rango.")
+
+        # Registrar cada operacion en el orden correcto.
+        pasos.append(
+            f"{formato(a)} {simbolo} {formato(b)} = "
+            f"{formato(resultado)}"
+        )
+
+        return resultado
+
+    # Numeros negativos y positivos.
+    if isinstance(nodo, ast.UnaryOp):
+        valor = evaluar(nodo.operand, pasos)
+
+        if isinstance(nodo.op, ast.Not):
+            resultado = not bool(valor)
+            pasos.append(
+                f"NOT {formato(valor)} = {formato(resultado)}"
+            )
+            return resultado
+
+        tipo = type(nodo.op)
+
+        if tipo not in UNARIOS:
+            raise ValueError("Operacion unaria no permitida.")
+
+        resultado = UNARIOS[tipo](valor)
+
+        if tipo == ast.USub:
+            pasos.append(f"-({formato(valor)}) = {formato(resultado)}")
+
+        return resultado
+
+    # Funciones: promedio(), porcentaje(), raiz(), abs(), etc.
+    if isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name):
+        nombre = nodo.func.id
+
+        if nombre not in FUNCIONES or nodo.keywords:
+            raise ValueError("Funcion no permitida.")
+
+        argumentos = [evaluar(x, pasos) for x in nodo.args]
+        resultado = FUNCIONES[nombre](*argumentos)
+
+        if isinstance(resultado, complex):
+            raise ValueError("El resultado no es real.")
+
+        if isinstance(resultado, float) and not math.isfinite(resultado):
+            raise ValueError("Resultado fuera de rango.")
+
+        if nombre == "promedio":
+            pasos.append(
+                "Promedio: (" +
+                " + ".join(formato(x) for x in argumentos) +
+                f") / {len(argumentos)} = {formato(resultado)}"
+            )
+
+        elif nombre == "porcentaje":
+            pasos.append(
+                f"Porcentaje: {formato(argumentos[0])} × "
+                f"{formato(argumentos[1])} / 100 "
+                f"= {formato(resultado)}"
+            )
+
+        elif nombre in ("raiz", "sqrt"):
+            pasos.append(
+                f"Raiz cuadrada de {formato(argumentos[0])} "
+                f"= {formato(resultado)}"
+            )
+
+        elif nombre == "raiz_n":
+            pasos.append(
+                f"Raiz de indice {formato(argumentos[1])} "
+                f"de {formato(argumentos[0])} "
+                f"= {formato(resultado)}"
+            )
+
+        elif nombre == "abs":
+            pasos.append(
+                f"Valor absoluto de {formato(argumentos[0])} "
+                f"= {formato(resultado)}"
+            )
+
+        return resultado
+
+    # Comparaciones: ==, !=, <, <=, >, >=.
+    if isinstance(nodo, ast.Compare):
+        a = evaluar(nodo.left, pasos)
+
+        for op, comp in zip(nodo.ops, nodo.comparators):
+            b = evaluar(comp, pasos)
+
+            if isinstance(op, ast.Eq):
+                ok, simbolo = a == b, "=="
+            elif isinstance(op, ast.NotEq):
+                ok, simbolo = a != b, "!="
+            elif isinstance(op, ast.Lt):
+                ok, simbolo = a < b, "<"
+            elif isinstance(op, ast.LtE):
+                ok, simbolo = a <= b, "<="
+            elif isinstance(op, ast.Gt):
+                ok, simbolo = a > b, ">"
+            elif isinstance(op, ast.GtE):
+                ok, simbolo = a >= b, ">="
+            else:
+                raise ValueError("Comparacion no permitida.")
+
+            pasos.append(
+                f"{formato(a)} {simbolo} {formato(b)} "
+                f"= {formato(ok)}"
+            )
+
+            if not ok:
+                return False
+
+            a = b
+
+        return True
+
+    # Logica: AND y OR.
+    if isinstance(nodo, ast.BoolOp):
+        if isinstance(nodo.op, ast.And):
+            valores = []
+
+            for elemento in nodo.values:
+                valor = evaluar(elemento, pasos)
+                valores.append(bool(valor))
+
+                # AND es falso si algun elemento es falso.
+                if not valor:
+                    return False
+
+            resultado = all(valores)
+            pasos.append(f"AND = {formato(resultado)}")
+            return resultado
+
+        if isinstance(nodo.op, ast.Or):
+            valores = []
+
+            for elemento in nodo.values:
+                valor = evaluar(elemento, pasos)
+                valores.append(bool(valor))
+
+                # OR es verdadero si algun elemento es verdadero.
+                if valor:
+                    return True
+
+            resultado = any(valores)
+            pasos.append(f"OR = {formato(resultado)}")
+            return resultado
+
+    raise ValueError(
+        "Operacion no compatible. Revisa los numeros y operadores."
+    )
+
+
+def calcular_con_procedimiento(texto):
+    expresion = preparar(texto)
+    arbol = ast.parse(expresion, mode="eval")
+    pasos = []
+
+    resultado = evaluar(arbol, pasos)
+
+    return resultado, pasos
+
+
+# ---------------- APLICACION KIVY ----------------
+
+class CLASSNOTE(App):
+
+    title = "CLASSNOTE"
+
+    def build(self):
+        Window.clearcolor = color(AZUL_OSCURO)
+        Window.softinput_mode = "below_target"
+
+        principal = BoxLayout(
+            orientation="vertical",
+            padding=dp(12),
+            spacing=dp(8)
+        )
+
+        # Encabezado.
+        encabezado = BoxLayout(
+            size_hint_y=None,
+            height=dp(60),
+            spacing=dp(10)
+        )
+
+        logo = Label(
+            text="[b][color=087BFF]A[/color][color=FFFFFF]+[/color][/b]",
+            markup=True,
+            font_size=sp(40),
+            size_hint_x=None,
+            width=dp(75)
+        )
+        encabezado.add_widget(logo)
+
+        textos = BoxLayout(orientation="vertical")
+
+        nombre = Label(
+            text="[b]CLASSNOTE[/b]",
+            markup=True,
+            color=color(AMARILLO),
+            font_size=sp(25),
+            halign="left"
+        )
+        nombre.bind(
+            size=lambda w, s: setattr(w, "text_size", s)
+        )
+
+        subtitulo = Label(
+            text="Calculadora matematica paso a paso",
+            color=color(GRIS),
+            font_size=sp(13),
+            halign="left"
+        )
+        subtitulo.bind(
+            size=lambda w, s: setattr(w, "text_size", s)
+        )
+
+        textos.add_widget(nombre)
+        textos.add_widget(subtitulo)
+        encabezado.add_widget(textos)
+        principal.add_widget(encabezado)
+
+        bienvenida = Label(
+            text="Resuelve tus problemas y aprende el procedimiento.",
+            color=color(BLANCO),
+            font_size=sp(14),
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(42)
+        )
+        bienvenida.bind(
+            size=lambda w, s: setattr(w, "text_size", (s[0], None))
+        )
+        principal.add_widget(bienvenida)
+
+        # Entrada.
+        self.entrada = TextInput(
+            hint_text="Escribe una operacion...",
+            multiline=False,
+            font_size=sp(21),
+            foreground_color=color(AMARILLO),
+            hint_text_color=color(GRIS),
+            background_normal="",
+            background_active="",
+            background_color=color(NEGRO),
+            cursor_color=color(AMARILLO),
+            padding=[dp(10), dp(14)],
+            size_hint_y=None,
+            height=dp(55)
+        )
+
+        self.entrada.bind(
+            on_text_validate=lambda *_: self.resolver()
+        )
+        principal.add_widget(self.entrada)
+
+        # Resultado.
+        self.salida = Label(
+            text="RESULTADO: --",
+            color=color(AMARILLO),
+            font_size=sp(19),
+            bold=True,
+            halign="left",
+            valign="middle",
+            size_hint_y=None,
+            height=dp(42)
+        )
+        self.salida.bind(
+            size=lambda w, s: setattr(w, "text_size", s)
+        )
+        principal.add_widget(self.salida)
+
+        # Procedimiento desplazable.
+        titulo_pasos = Label(
+            text="[b]PROCEDIMIENTO MATEMATICO[/b]",
+            markup=True,
+            color=color(AZUL),
+            font_size=sp(16),
+            size_hint_y=None,
+            height=dp(30),
+            halign="left"
+        )
+        titulo_pasos.bind(
+            size=lambda w, s: setattr(w, "text_size", s)
+        )
+        principal.add_widget(titulo_pasos)
+
+        scroll_pasos = ScrollView(
+            do_scroll_x=False,
+            size_hint_y=1
+        )
+
+        self.texto_pasos = Label(
+            text="Aqui apareceran los pasos de tu operacion.",
+            color=color(BLANCO),
+            font_size=sp(15),
+            halign="left",
+            valign="top",
+            size_hint_y=None
+        )
+
+        self.texto_pasos.bind(
+            width=lambda w, valor: setattr(
+                w, "text_size", (valor, None)
+            ),
+            texture_size=lambda w, valor: setattr(
+                w, "height", valor[1] + dp(20)
+            )
+        )
+
+        scroll_pasos.add_widget(self.texto_pasos)
+        principal.add_widget(scroll_pasos)
+
+        # Teclado.
+        desplazamiento = ScrollView(
+            do_scroll_x=False,
+            size_hint_y=None,
+            height=dp(230)
+        )
+
+        teclado = GridLayout(
+            cols=4,
+            spacing=dp(5),
+            size_hint_y=None,
+            padding=[0, dp(3)]
+        )
+        teclado.bind(
+            minimum_height=teclado.setter("height")
+        )
+
+        botones = [
+            ("AC", "AC"), ("BORRAR", "BORRAR"),
+            ("(", "("), (")", ")"),
+            ("7", "7"), ("8", "8"), ("9", "9"), ("÷", "÷"),
+            ("4", "4"), ("5", "5"), ("6", "6"), ("×", "×"),
+            ("1", "1"), ("2", "2"), ("3", "3"), ("−", "−"),
+            ("0", "0"), (".", "."), ("%", "%"), ("+", "+"),
+            ("POTENCIA", "^"), ("RAIZ", "raiz("),
+            ("=", "="), ("AND", " and "),
+            ("OR", " or "), ("NOT", "not "),
+            ("<", "<"), (">", ">"),
+        ]
+
+        for titulo, valor in botones:
+            fondo = AZUL if valor == "=" else AMARILLO
+
+            if valor in ("AC", "BORRAR"):
+                fondo = ROJO
+
+            boton = Button(
+                text=titulo,
+                font_size=sp(14),
+                bold=True,
+                color=color(
+                    BLANCO if fondo in (AZUL, ROJO) else NEGRO
+                ),
+                background_normal="",
+                background_down="",
+                background_color=color(fondo),
+                size_hint_y=None,
+                height=dp(47)
+            )
+
+            boton.bind(
+                on_release=lambda instancia, v=valor: self.pulsar(v)
+            )
+            teclado.add_widget(boton)
+
+        desplazamiento.add_widget(teclado)
+        principal.add_widget(desplazamiento)
+
+        ayuda = Label(
+            text=(
+                "Ej.: (8)(8^2)/6 | promedio(4,6,8) | "
+                "porcentaje(200,15) | raiz(81)"
+            ),
+            font_size=sp(11),
+            color=color(GRIS),
+            size_hint_y=None,
+            height=dp(35)
+        )
+        principal.add_widget(ayuda)
+
+        return principal
+
+    # ---------------- BOTONES ----------------
+
+    def pulsar(self, valor):
+        actual = self.entrada.text
+
+        if valor == "AC":
+            self.entrada.text = ""
+            self.salida.text = "RESULTADO: --"
+            self.texto_pasos.text = (
+                "Escribe una operacion para ver su procedimiento."
+            )
+
+        elif valor == "BORRAR":
+            self.entrada.text = actual[:-1]
+
+        elif valor == "=":
+            self.resolver()
+
+        else:
+            self.entrada.text = actual + valor
+            self.entrada.focus = True
+
+    # ---------------- RESOLVER ----------------
+
+    def resolver(self):
+        try:
+            expresion_original = self.entrada.text.strip()
+
+            resultado, pasos = calcular_con_procedimiento(
+                expresion_original
+            )
+
+            texto_resultado = formato(resultado)
+
+            self.salida.text = "RESULTADO: " + texto_resultado
+
+            lineas = [
+                "[b]Operacion:[/b]",
+                expresion_original,
+                "",
+                "[b]Desarrollo paso a paso:[/b]",
+            ]
+
+            if pasos:
+                for i, paso in enumerate(pasos, start=1):
+                    lineas.append(f"{i}. {paso}")
+            else:
+                lineas.append(
+                    "La expresion no requiere operaciones intermedias."
+                )
+
+            lineas.extend([
+                "",
+                "[b]RESULTADO FINAL:[/b]",
+                texto_resultado
+            ])
+
+            self.texto_pasos.text = "\n".join(lineas)
+
+            print("\nCLASSNOTE")
+            print("Operacion:", expresion_original)
+
+            for i, paso in enumerate(pasos, start=1):
+                print(f"Paso {i}: {paso}")
+
+            print("Resultado:", texto_resultado)
+
+        except ZeroDivisionError:
+            self.salida.text = "ERROR: division entre cero"
+            self.texto_pasos.text = (
+                "No se puede dividir entre cero. "
+                "Corrige la operacion e intenta nuevamente."
+            )
+
+        except (ValueError, SyntaxError, TypeError,
+                OverflowError, ArithmeticError) as error:
+            self.salida.text = "ERROR MATEMATICO"
+            self.texto_pasos.text = (
+                "No se pudo resolver la expresion.\n\n"
+                "Motivo: " + str(error)
+            )
+
+        except Exception as error:
+            self.salida.text = "ERROR"
+            self.texto_pasos.text = (
+                "Ocurrio un problema inesperado:\n" + str(error)
+            )
+
+
+if __name__ == "__main__":
+    CLASSNOTE().run()
